@@ -36,5 +36,6 @@ go.work.sum
 komari
 /dist/
 .codex
+/AGENTS.md
 
 /web/filemanager/data
