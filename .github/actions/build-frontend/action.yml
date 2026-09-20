@@ -42,6 +42,7 @@ runs:
         else
           git clone --depth=1 "${{ inputs.repository }}" komari-web
         fi
+        node "$GITHUB_WORKSPACE/.github/actions/build-frontend/patch-expiry-datetime-local.mjs" "komari-web/src/pages/admin/index.tsx"
         cd komari-web
         npm install
         npm run build
