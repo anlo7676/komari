@@ -88,6 +88,21 @@ func stripServiceWorkerRegistration(html string) string {
 	return strings.ReplaceAll(html, `<script id="vite-plugin-pwa:register-sw" src="/registerSW.js"></script>`, "")
 }
 
+// isRootPWAControlPath reports whether a root-level request can install or
+// execute the origin-wide service worker. These files must never come from an
+// installed theme: an older theme worker can otherwise serve its cached
+// index.html for /admin routes before the request reaches the server.
+func isRootPWAControlPath(requestPath string) bool {
+	cleanPath := strings.TrimPrefix(path.Clean("/"+requestPath), "/")
+	if strings.Contains(cleanPath, "/") {
+		return false
+	}
+	if cleanPath == "sw.js" || cleanPath == "registerSW.js" {
+		return true
+	}
+	return strings.HasPrefix(cleanPath, "workbox-") && strings.HasSuffix(cleanPath, ".js")
+}
+
 // isSafePath 验证路径是否在指定的基础目录内，防止路径穿透攻击
 func isSafePath(basePath, targetPath string) bool {
 	// 获取基础目录的绝对路径
@@ -342,7 +357,8 @@ func static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc), force
 		reqPath := c.Request.URL.Path
 		cfg := getConfig()
 		currentTheme := cfg[config.ThemeKey].(string)
-		if forceDefaultTheme {
+		pwaControlPath := isRootPWAControlPath(reqPath)
+		if forceDefaultTheme || pwaControlPath {
 			currentTheme = DefaultTheme
 		}
 
@@ -351,7 +367,18 @@ func static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc), force
 
 		content, mimeType, exists := getFileContent(currentTheme, distPath)
 		if exists {
+			if pwaControlPath {
+				c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+			}
 			c.Data(http.StatusOK, mimeType, content)
+			return
+		}
+		if pwaControlPath {
+			// Never fall back to a custom theme or index.html for executable PWA
+			// control files. A missing safe worker is preferable to reinstalling
+			// an origin-wide worker supplied by a theme.
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+			c.Status(http.StatusNotFound)
 			return
 		}
 

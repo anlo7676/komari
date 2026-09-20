@@ -1,6 +1,7 @@
 package public
 
 import (
+	"bytes"
 	"io"
 	"net/http/httptest"
 	"os"
@@ -82,6 +83,91 @@ func TestEmbeddedDistDoesNotEmbedRawFiles(t *testing.T) {
 	}
 	if content, ok := defaultDistFiles[IndexFile]; !ok || len(content) == 0 {
 		t.Fatalf("embedded dist does not contain a non-empty %q", IndexFile)
+	}
+}
+
+func TestIsRootPWAControlPath(t *testing.T) {
+	tests := map[string]struct {
+		path string
+		want bool
+	}{
+		"service worker":        {path: "/sw.js", want: true},
+		"registration helper":   {path: "/registerSW.js", want: true},
+		"workbox runtime":       {path: "/workbox-a1b2c3.js", want: true},
+		"nested worker":         {path: "/assets/sw.js"},
+		"similar worker name":   {path: "/sw.js.bak"},
+		"workbox source map":    {path: "/workbox-a1b2c3.js.map"},
+		"ordinary hashed asset": {path: "/assets/entry-main-a1b2c3.js"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := isRootPWAControlPath(tt.path); got != tt.want {
+				t.Fatalf("isRootPWAControlPath(%q) = %t, want %t", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStaticDoesNotServePWAControlFilesFromCustomTheme(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Chdir(t.TempDir())
+	themeDist := filepath.Join("data", "theme", "custom", "dist")
+	if err := os.MkdirAll(themeDist, 0o755); err != nil {
+		t.Fatalf("create custom theme directory: %v", err)
+	}
+
+	controlFiles := []string{"sw.js", "registerSW.js"}
+	for _, name := range controlFiles {
+		if _, ok := defaultDistFiles[name]; !ok {
+			t.Fatalf("embedded default frontend does not contain %q", name)
+		}
+		if err := os.WriteFile(filepath.Join(themeDist, name), []byte("custom override"), 0o644); err != nil {
+			t.Fatalf("write custom %s: %v", name, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(themeDist, "theme.js"), []byte("custom asset"), 0o644); err != nil {
+		t.Fatalf("write ordinary custom asset: %v", err)
+	}
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open config db: %v", err)
+	}
+	config.SetDb(db)
+	if err := config.Set(config.ThemeKey, "custom"); err != nil {
+		t.Fatalf("set custom theme: %v", err)
+	}
+
+	router := gin.New()
+	Static(router.Group("/"), func(handlers ...gin.HandlerFunc) {
+		router.NoRoute(handlers...)
+	})
+	for _, name := range controlFiles {
+		request := httptest.NewRequest("GET", "/"+name, nil)
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != 200 {
+			t.Fatalf("%s status = %d, want 200", name, recorder.Code)
+		}
+		if got := recorder.Body.Bytes(); !bytes.Equal(got, defaultDistFiles[name]) {
+			t.Fatalf("%s was not served from the embedded default frontend", name)
+		}
+		if got := recorder.Header().Get("Cache-Control"); got != "no-cache, no-store, must-revalidate" {
+			t.Fatalf("%s Cache-Control = %q", name, got)
+		}
+	}
+
+	missingWorker := httptest.NewRecorder()
+	router.ServeHTTP(missingWorker, httptest.NewRequest("GET", "/workbox-not-embedded.js", nil))
+	if missingWorker.Code != 404 {
+		t.Fatalf("missing workbox status = %d, want 404", missingWorker.Code)
+	}
+
+	ordinaryAsset := httptest.NewRecorder()
+	router.ServeHTTP(ordinaryAsset, httptest.NewRequest("GET", "/theme.js", nil))
+	if ordinaryAsset.Code != 200 || ordinaryAsset.Body.String() != "custom asset" {
+		t.Fatalf("ordinary custom asset = (%d, %q), want (200, %q)", ordinaryAsset.Code, ordinaryAsset.Body.String(), "custom asset")
 	}
 }
 
