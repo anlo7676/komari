@@ -56,14 +56,15 @@ BACKUP_DIR="$INSTALL_DIR/backup"
 DATA_BACKUP_DIR="$DATA_DIR/data/backup"
 DEFAULT_PORT="25774"
 LISTEN_PORT=""
-STANDARD_REPO="komari-monitor/komari"
+# Fork 标准版默认从本仓库更新；可通过 KOMARI_STANDARD_REPO 覆盖下载源。
+STANDARD_REPO="${KOMARI_STANDARD_REPO:-anlo7676/komari}"
 LITE_REPO="nuomiiiii/komari"
 REPO="$STANDARD_REPO"
 # 发行版本: standard（标准版）或 lite（Lite 轻量版）
 EDITION="standard"
 EDITION_NAME=""
-# 发布通道: stable（稳定版）或 snapshot（快照版）；Lite 仅支持 stable
-CHANNEL="stable"
+# 发布通道: stable（稳定版）或 snapshot（快照版）；Fork 默认发布 snapshot，Lite 仅支持 stable
+CHANNEL="snapshot"
 CHANNEL_NAME=""
 # 语言: en（English）或 zh（简体中文）
 LANGUAGE="zh"
@@ -184,12 +185,12 @@ msg() {
             zh_text='请选择发布通道（默认 1）：'
             ;;
         channel_stable)
-            en_text='Stable release (recommended)'
-            zh_text='正式版（推荐）'
+            en_text='Stable release (when available)'
+            zh_text='正式版（发布后可用）'
             ;;
         channel_snapshot)
-            en_text='Snapshot release (latest changes)'
-            zh_text='快照版（最新功能）'
+            en_text='Snapshot release (recommended for this fork)'
+            zh_text='快照版（当前 Fork 推荐）'
             ;;
         channel_name_stable)
             en_text='stable'
@@ -827,21 +828,21 @@ select_channel() {
     fi
 
     choice=$(ui_menu "$(msg channel_title)" "$(msg channel_prompt)" \
-        "1" "$(msg channel_stable)" \
-        "2" "$(msg channel_snapshot)")
+        "1" "$(msg channel_snapshot)" \
+        "2" "$(msg channel_stable)")
 
     case "$choice" in
-        snapshot|2)
+        stable|2)
+            CHANNEL="stable"
+            CHANNEL_NAME="$(msg channel_name_stable)"
+            ;;
+        snapshot|1|"")
             CHANNEL="snapshot"
             CHANNEL_NAME="$(msg channel_name_snapshot)"
             ;;
-        stable|1|"")
-            CHANNEL="stable"
-            CHANNEL_NAME="$(msg channel_name_stable)"
-            ;;
         *)
-            CHANNEL="stable"
-            CHANNEL_NAME="$(msg channel_name_stable)"
+            CHANNEL="snapshot"
+            CHANNEL_NAME="$(msg channel_name_snapshot)"
             ;;
     esac
     progress_add "$CHANNEL_NAME"
